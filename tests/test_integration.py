@@ -7,19 +7,6 @@ import logging
 from datetime import timedelta
 from unittest.mock import patch
 
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import (
-    CONF_DEVICE_ID,
-    CONF_MONITORED_VARIABLES,
-    CONF_PASSWORD,
-    CONF_SCAN_INTERVAL,
-    CONF_USERNAME,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
-from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
-
 from custom_components.atonstorage.const import (
     AVAILABLE_SENSORS,
     CONF_BATTERY_RESERVE,
@@ -34,6 +21,18 @@ from fake_portal import (
     USERNAME,
     make_entry,
 )
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import (
+    CONF_DEVICE_ID,
+    CONF_MONITORED_VARIABLES,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 POWER = "sensor.user_instant_solar_power"
 CHARGED = "sensor.user_battery_charged_energy"

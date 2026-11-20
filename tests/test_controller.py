@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from custom_components.atonstorage.const import CONF_BATTERY_RESERVE
 from custom_components.atonstorage.controller import (
     _PLANT_ID_RE,

@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-
 from custom_components.atonstorage import controller as controller_module
 from fake_portal import FakePortal
 

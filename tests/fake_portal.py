@@ -13,6 +13,7 @@ import time
 import urllib.parse
 
 import httpx
+from custom_components.atonstorage.const import AVAILABLE_SENSORS, DOMAIN
 from homeassistant.const import (
     CONF_DEVICE_ID,
     CONF_MONITORED_VARIABLES,
@@ -21,8 +22,6 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.atonstorage.const import AVAILABLE_SENSORS, DOMAIN
 
 SERIAL = "R12AB34567S"
 PLANT_ID = "123456789"

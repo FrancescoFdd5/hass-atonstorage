@@ -54,7 +54,7 @@ Single package, no build step, no frontend.
 - Login success = numeric `var idImpianto = <digits>;` in the page after the
   POST, which also carries the serial in `var sn = "..."`. Wrong credentials
   redirect back to `/atonTC/login.php` with its password form: only that means
-  "rejected" (reauth). Any other page without a plant id (maintenance, outage)
+  "rejected" (reauth). Any other page without a plant ID (maintenance, outage)
   is a connection error, so polling goes on. Before login `index.php` is a 302
   whose body still contains `var idImpianto = ;`. A request without a valid
   session gets HTTP 401 `Unauthorized`; a non-JSON response also means the
@@ -66,7 +66,7 @@ Single package, no build step, no frontend.
   (self-consumption, the portal's "Energia Auto Consumata"), same as the
   monitor's `eBatteria`. Battery charge/discharge come from the `vb` and `ib`
   slot series (`vb * ib`, positive in, negative out). The keys `tot_pBatteria`
-  and `tot_pBatteriaB` stay as entity keys for the unique ids.
+  and `tot_pBatteriaB` stay as entity keys for the unique IDs.
 - `status` is a bitfield (1=grid→house, 2=solar→battery, 4=solar→grid, 8=battery→house,
   16=solar→house, 32=grid→battery, 64=battery→grid). `allarmi` is positional
   against the 128-entry `getAlarmDesc` table.
