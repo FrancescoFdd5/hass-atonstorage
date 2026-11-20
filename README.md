@@ -27,7 +27,10 @@ and alarm status.
    click **Add integration**. Select **AtonStorage** and fill in:
    - **Username** — your AtonStorage portal username
    - **Password** — your AtonStorage portal password
-   - **Serial number** — the serial number of the inverter
+   - **Serial number** — optional: leave it empty to use the plant of
+     your account. Otherwise enter the plant serial shown in the
+     AtonStorage app or portal, not the 16-digit number on the inverter
+     label
    - **Scan interval (seconds)** — how often to poll the portal (10–3600,
      default 30)
    - **Sensors to create** — which sensors to expose; tick **BINARY SENSORS**
@@ -38,9 +41,19 @@ you to enter it again (re-authentication flow) instead of failing silently.
 
 ## Options
 
-After setup you can change the scan interval and the sensor selection from
-`Settings` → `Devices & Services` → *AtonStorage* → **Options**. Changes are
-applied immediately — no restart needed.
+After setup you can change the scan interval, the sensor selection and the
+battery reserve from `Settings` → `Devices & Services` → *AtonStorage* →
+**Options**. Changes are applied immediately — no restart needed.
+
+- **Battery reserve** (default 20%) — the share of the battery the Aton app
+  hides to protect it: the app shows 0% when the plant reports about 20%. Only
+  the *Battery level usable* sensor uses it; *Battery level* keeps the real
+  value.
+
+Instant values (power, voltages, battery level, ...) are read on every scan.
+The daily energy totals of the portal change only every 20 minutes, so they
+are fetched every 5 minutes; if the portal refuses a request (it rate limits
+them), the previous totals are kept and nothing goes unavailable.
 
 ## Sensors
 
@@ -49,8 +62,8 @@ The available categories:
 
 | Category | Sensors |
 | --- | --- |
-| Battery | level, voltage, current, charged/discharged current, charged/discharged energy, BMS / inverter / Ah state of charge |
-| Instant power | solar, user, battery, grid (plus grid and battery input/output split) |
+| Battery | level, usable level (as in the Aton app), voltage, current, charged/discharged current, charged/discharged energy, BMS / inverter / Ah state of charge |
+| Instant power | solar, user, battery, grid (plus grid and battery input/output split, and unfiltered grid and user power) |
 | Daily energy | bought, sold, solar, consumed, self-consumed |
 | Grid & utilities | voltage, frequency, current, utilities voltage/current |
 | Solar strings | voltage and current for string 1 and 2 |
@@ -65,7 +78,20 @@ Notes:
 - EV sensors only report data when the plant has a wallbox; on other plants
   they show *unknown*
 - Per-phase sensors read 0 on single-phase plants
-- Daily counters reset to 0 at midnight, as reported by the plant
+- Daily counters reset to 0 at midnight, as reported by the plant, and never
+  go backwards during the day, so a bad reply cannot inflate the statistics
+- Battery charged/discharged energy is the energy that went into and out of
+  the battery, from its voltage and current. Up to 1.0.10 they reported the
+  portal's `tot_pBatteria`/`tot_pBatteriaB`, which are the energy the plant
+  supplied to the house, not battery charge. The entities are the same, so the
+  history continues; update right after midnight to avoid a one-off jump in
+  that day's statistics
+- When the plant has not reported for over 70 minutes (the portal's own
+  offline threshold), instant values become *unavailable* instead of showing
+  the last reading as current; daily counters keep their value
+- *Instant grid power real* and *Instant user power real* are the unfiltered
+  readings: the plain ones read 0 W on small flows. Positive grid power is
+  export
 
 ## Binary sensors
 
@@ -74,14 +100,14 @@ Enabled by ticking **BINARY SENSORS** during setup or in the options:
 - Energy flows: grid→house, solar→battery, solar→grid, battery→house,
   solar→house, grid→battery, battery→grid
 - EV status: off, on, charging, warning
-- Connectivity: WiFi
+- Connectivity: Wi-Fi
 - Problems: alarm active
 
 ## Development
 
 ```sh
 pip install -r requirements-dev.txt
-pytest                      # unit tests, no network access needed
+pytest                      # runs Home Assistant against an offline fake portal
 pre-commit run --all-files  # black + flake8
 ```
 
