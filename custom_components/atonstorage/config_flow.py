@@ -17,12 +17,19 @@ from homeassistant.const import (
 from homeassistant.helpers import selector
 from homeassistant.util import slugify
 
-from .const import AVAILABLE_SENSORS, DEFAULT_NAME, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    AVAILABLE_SENSORS,
+    CONF_BATTERY_RESERVE,
+    DEFAULT_BATTERY_RESERVE,
+    DEFAULT_NAME,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 from .controller import AtonStorageConnectionError
 from .controller import Controller as AtonStorage
 from .controller import (
+    InvalidSerialNumberError,
     InvalidUsernameOrPasswordError,
-    SerialNumberRequiredError,
     UsernameAndPasswordRequiredError,
 )
 
@@ -31,6 +38,13 @@ _LOGGER = logging.getLogger(__name__)
 # The value is forwarded to set_request.php as the plant's monitoring interval,
 # so it has to stay an int and within something the portal accepts.
 SCAN_INTERVAL_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=10, max=3600))
+
+# The share of the battery the Aton app hides as a reserve.
+BATTERY_RESERVE_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=0, max=50))
+
+PASSWORD_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
 
 SENSOR_SELECTOR = selector.SelectSelector(
     selector.SelectSelectorConfig(
@@ -43,8 +57,9 @@ SENSOR_SELECTOR = selector.SelectSelector(
 DEVICE_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Required(CONF_DEVICE_ID): str,
+        vol.Required(CONF_PASSWORD): PASSWORD_SELECTOR,
+        # Optional: when empty the serial shown by the portal after login is used.
+        vol.Optional(CONF_DEVICE_ID): str,
         vol.Optional(
             CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
         ): SCAN_INTERVAL_VALIDATOR,
@@ -54,15 +69,13 @@ DEVICE_SCHEMA = vol.Schema(
     }
 )
 
-REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
+REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): PASSWORD_SELECTOR})
 
 
 class FlowHandler(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for AtonStorage."""
 
     VERSION = 1
-
-    _reauth_entry: ConfigEntry | None = None
 
     async def _async_validate(
         self, data: dict[str, Any]
@@ -88,8 +101,8 @@ class FlowHandler(ConfigFlow, domain=DOMAIN):
                 CONF_USERNAME: "username_required",
                 CONF_PASSWORD: "password_required",
             }, None
-        except SerialNumberRequiredError:
-            return {CONF_DEVICE_ID: "serial_number_required"}, None
+        except InvalidSerialNumberError:
+            return {CONF_DEVICE_ID: "invalid_serial"}, None
         except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected exception")
             return {"base": "unknown"}, None
@@ -112,7 +125,8 @@ class FlowHandler(ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(
                     title=f"{DEFAULT_NAME} {user_input.get(CONF_USERNAME)}",
-                    data=user_input,
+                    # The serial the portal confirmed, also when left empty.
+                    data={**user_input, CONF_DEVICE_ID: serial_number},
                 )
 
         return self.async_show_form(
@@ -121,23 +135,27 @@ class FlowHandler(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reauth(self, entry_data):
         """Handle credentials the portal no longer accepts."""
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input=None):
         """Ask for a new password and validate it before storing it."""
         errors: dict[str, str] = {}
-        entry = self._reauth_entry
+        entry = self._get_reauth_entry()
 
         if user_input is not None:
             new_data = {**entry.data, **user_input}
             errors, _ = await self._async_validate(new_data)
 
             if not errors:
-                self.hass.config_entries.async_update_entry(entry, data=new_data)
-                await self.hass.config_entries.async_reload(entry.entry_id)
+                changed = self.hass.config_entries.async_update_entry(
+                    entry, data=new_data
+                )
+                # The update listener already reloads a changed entry; an extra
+                # reload here meant two reloads and two logins. Reload only when
+                # nothing else will: same password typed again, or no listener
+                # because the entry never finished setting up.
+                if not changed or not entry.update_listeners:
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
@@ -175,6 +193,7 @@ class OptionsFlowHandler(OptionsFlow):
             CONF_MONITORED_VARIABLES,
             entry.data.get(CONF_MONITORED_VARIABLES, AVAILABLE_SENSORS),
         )
+        reserve = entry.options.get(CONF_BATTERY_RESERVE, DEFAULT_BATTERY_RESERVE)
 
         return self.async_show_form(
             step_id="init",
@@ -186,6 +205,9 @@ class OptionsFlowHandler(OptionsFlow):
                     vol.Required(
                         CONF_MONITORED_VARIABLES, default=selected
                     ): SENSOR_SELECTOR,
+                    vol.Optional(
+                        CONF_BATTERY_RESERVE, default=reserve
+                    ): BATTERY_RESERVE_VALIDATOR,
                 }
             ),
         )

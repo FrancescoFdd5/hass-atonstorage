@@ -22,7 +22,13 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import AVAILABLE_SENSORS, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    AVAILABLE_SENSORS,
+    CONF_BATTERY_RESERVE,
+    DEFAULT_BATTERY_RESERVE,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 from .controller import Controller as AtonStorage
 from .controller import InvalidUsernameOrPasswordError
 
@@ -60,14 +66,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     serial_number = entry.data.get(CONF_DEVICE_ID)
     scan_interval = _entry_value(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
     sensors_selected = _entry_value(entry, CONF_MONITORED_VARIABLES, AVAILABLE_SENSORS)
+    battery_reserve = _entry_value(entry, CONF_BATTERY_RESERVE, DEFAULT_BATTERY_RESERVE)
 
     controller = AtonStorage(
-        hass, user, password, serial_number, {"interval": scan_interval}
+        hass,
+        user,
+        password,
+        serial_number,
+        {"interval": scan_interval, CONF_BATTERY_RESERVE: battery_reserve},
     )
 
     try:
         coordinator = await _create_update_coordinator(
-            hass, controller, serial_number, timedelta(seconds=scan_interval)
+            hass, entry, controller, serial_number, timedelta(seconds=scan_interval)
         )
     except Exception:
         # async_config_entry_first_refresh already raises ConfigEntryNotReady or
@@ -110,6 +121,7 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def _create_update_coordinator(
     hass,
+    entry: ConfigEntry,
     bridge: AtonStorage,
     serial_number: str,
     update_interval: timedelta,
@@ -118,6 +130,7 @@ async def _create_update_coordinator(
     coordinator = AtonStorageUpdateCoordinator(
         hass,
         _LOGGER,
+        config_entry=entry,
         bridge=bridge,
         serial_number=serial_number,
         name=f"{serial_number}_data_update_coordinator",
@@ -136,6 +149,7 @@ class AtonStorageUpdateCoordinator(DataUpdateCoordinator):
         self,
         hass: HomeAssistant,
         logger: logging.Logger,
+        config_entry: ConfigEntry,
         bridge: AtonStorage,
         serial_number: str,
         name: str,
@@ -147,6 +161,9 @@ class AtonStorageUpdateCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             logger,
+            # Passed explicitly: the implicit lookup through a context variable
+            # is deprecated and logs a warning for core integrations.
+            config_entry=config_entry,
             name=name,
             update_interval=update_interval,
             update_method=update_method,

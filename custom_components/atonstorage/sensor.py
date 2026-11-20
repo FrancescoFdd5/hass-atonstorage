@@ -34,6 +34,14 @@ from .controller import Controller as AtonStorage
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_number(value) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _plant_timestamp(value):
     """Parse a dd/mm/YYYY HH:MM:SS stamp, tolerating an empty or bad one."""
     if not value:
@@ -50,6 +58,8 @@ class AtonStorageSensorEntityDescription(SensorEntityDescription):
 
     value_conversion_function: Callable[[Any], Any] = lambda val: val
     value_calc_function: Callable[[AtonStorage], Any] = None
+    # EV fields read -1 on a plant without a wallbox: report unknown instead.
+    requires_wallbox: bool = False
 
 
 INVERTER_SENSOR_DESCRIPTIONS = (
@@ -60,9 +70,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         name="Last update",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_conversion_function=lambda value: as_local(
-            datetime.strptime(value, "%d/%m/%Y %H:%M:%S")
-        ),
+        value_conversion_function=_plant_timestamp,
     ),
     # BATTERY
     AtonStorageSensorEntityDescription(
@@ -72,8 +80,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
-        # Limit battery_level to a maximum of 100 and convert it to an integer
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     AtonStorageSensorEntityDescription(
         key="vb",
@@ -247,6 +254,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        value_calc_function=lambda controller: controller.sold_energy,
     ),
     AtonStorageSensorEntityDescription(
         key="tot_pReteIn",
@@ -256,6 +264,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        value_calc_function=lambda controller: controller.bought_energy,
     ),
     AtonStorageSensorEntityDescription(
         key="ePannelli",
@@ -279,9 +288,11 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         value_conversion_function=lambda value: float(value) / 1000,
         # last_reset=as_local(datetime.combine(date.today(), datetime.min.time())),
     ),
-    # Daily counter, reset to 0 by the plant at midnight. TOTAL_INCREASING lets the
+    # Daily counters, reset to 0 at midnight. TOTAL_INCREASING lets the
     # statistics engine detect that reset; TOTAL would need a last_reset attribute,
     # which this integration does not publish.
+    # The keys stay for the unique ids and the long-term statistics, but the
+    # values come from vb * ib: tot_pBatteria is self-consumption, not charge.
     AtonStorageSensorEntityDescription(
         key="tot_pBatteria",
         translation_key="tot_pBatteria",
@@ -290,10 +301,8 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        value_calc_function=lambda controller: controller.battery_energy_charged,
     ),
-    # Daily counter, reset to 0 by the plant at midnight. TOTAL_INCREASING lets the
-    # statistics engine detect that reset; TOTAL would need a last_reset attribute,
-    # which this integration does not publish.
     AtonStorageSensorEntityDescription(
         key="tot_pBatteriaB",
         translation_key="tot_pBatteriaB",
@@ -302,6 +311,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        value_calc_function=lambda controller: controller.battery_energy_discharged,
     ),
     # CALCULATED VALUES #
     # GRID IN-OUT
@@ -353,16 +363,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.POWER_FACTOR,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        # Float math on purpose: int() used to truncate both terms, which
-        # reported a flat 100% for every day under 1 kWh of consumption.
-        value_calc_function=lambda controller: (
-            100.0
-            if controller.consumed_energy <= 0
-            else round(
-                100 - (controller.bought_energy / controller.consumed_energy * 100),
-                2,
-            )
-        ),
+        value_calc_function=lambda controller: controller.self_sufficiency,
     ),
     # BATTERY IN-OUT
     AtonStorageSensorEntityDescription(
@@ -397,23 +398,25 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="num_EV",
         translation_key="num_EV",
+        requires_wallbox=True,
         name="EV num",
         # icon="mdi:solar-power-variant",
     ),
     AtonStorageSensorEntityDescription(
         key="SoC_EV",
         translation_key="SoC_EV",
+        requires_wallbox=True,
         name="EV Battery level",
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
-        # Limit battery_level to a maximum of 100 and convert it to an integer
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     # EV charge
     AtonStorageSensorEntityDescription(
         key="setp_EV",
         translation_key="setp_EV",
+        requires_wallbox=True,
         name="EV setp",
         icon="mdi:car-electric",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
@@ -423,6 +426,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="potenza_EV",
         translation_key="potenza_EV",
+        requires_wallbox=True,
         name="EV Charge",
         icon="mdi:car-electric",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -432,6 +436,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="kmh",
         translation_key="kmh",
+        requires_wallbox=True,
         name="EV kmh",
         icon="mdi:car-electric",
         state_class=SensorStateClass.MEASUREMENT,
@@ -440,6 +445,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="e_ciclo_EV",
         translation_key="e_ciclo_EV",
+        requires_wallbox=True,
         name="EV Charged",
         icon="mdi:car-electric",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
@@ -450,6 +456,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="km",
         translation_key="km",
+        requires_wallbox=True,
         name="EV km",
         icon="mdi:car-electric",
         state_class=SensorStateClass.MEASUREMENT,
@@ -457,12 +464,12 @@ INVERTER_SENSOR_DESCRIPTIONS = (
     AtonStorageSensorEntityDescription(
         key="perc_carica",
         translation_key="perc_carica",
+        requires_wallbox=True,
         name="EV charged percentage",
         icon="mdi:car-electric",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        # Limit battery_level to a maximum of 100 and convert it to an integer
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     # ADDED IN 1.0.12, from fields the payload always carried but nothing read.
     # Three independent state of charge readings the plant reports side by side.
@@ -474,7 +481,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     AtonStorageSensorEntityDescription(
         key="socInv",
@@ -484,7 +491,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     AtonStorageSensorEntityDescription(
         key="socAh",
@@ -494,7 +501,7 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_conversion_function=lambda value: min(100, float(value) if value else 0),
+        value_conversion_function=lambda value: min(100, float(value)),
     ),
     # ALARMS
     AtonStorageSensorEntityDescription(
@@ -596,6 +603,37 @@ INVERTER_SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # ADDED IN 1.0.11
+    # The percentage the Aton app shows: it hides a reserve, set in the options.
+    AtonStorageSensorEntityDescription(
+        key="soc_usable",
+        translation_key="soc_usable",
+        name="Battery level usable",
+        native_unit_of_measurement=PERCENTAGE,
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_calc_function=lambda controller: controller.usable_soc,
+    ),
+    # Unfiltered readings: pRete and pUtenze drop small flows, e.g. 0 W while
+    # 41 W go to the grid. Same sign as pRete, positive is export.
+    AtonStorageSensorEntityDescription(
+        key="pReteReal",
+        translation_key="pReteReal",
+        name="Instant grid power real",
+        icon="mdi:transmission-tower",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    AtonStorageSensorEntityDescription(
+        key="pUtenzeReal",
+        translation_key="pUtenzeReal",
+        name="Instant user power real",
+        icon="mdi:home-lightning-bolt-outline",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
 )
 
 
@@ -607,7 +645,9 @@ async def async_setup_entry(
     """Set up the AtonStorage sensors."""
     _LOGGER.debug("Set up the AtonStorage sensors")
     entities = _create_entities(hass, entry)
-    async_add_entities(entities, True)
+    # No update_before_add: the coordinator has just refreshed, and asking again
+    # here triggered two more full refreshes, the second one rate limited.
+    async_add_entities(entities)
 
 
 def _create_entities(hass: HomeAssistant, entry: dict):
@@ -671,24 +711,50 @@ class AtonStorageSensorEntity(CoordinatorEntity, SensorEntity):
         )
 
         self._register_key = self.entity_description.key
+        self._numeric = (
+            description.native_unit_of_measurement is not None
+            or description.state_class is not None
+        )
+
+    @property
+    def available(self) -> bool:
+        """Instant readings go unavailable once the plant stops reporting."""
+        if not super().available:
+            return False
+        # The portal keeps serving the last reading of a silent plant. Daily
+        # counters stay, an instant value would be shown as current.
+        return not (
+            self.entity_description.state_class == SensorStateClass.MEASUREMENT
+            and self.controller.is_stale
+        )
 
     @property
     def native_value(self):
         """Native sensor value."""
 
-        if self.entity_description.value_calc_function:
-            value = self.entity_description.value_calc_function(self.controller)
-        else:
-            value = self.controller.get_raw_data(self._register_key)
-            # The payload simply lacks this key, e.g. the EV fields on a
-            # plant without a wallbox. Report unknown instead of feeding
-            # None to strptime() or float().
-            if value is None:
+        description = self.entity_description
+        if description.requires_wallbox and not self.controller.has_wallbox:
+            return None
+
+        # The portal sometimes sends "" or a non number. One bad field must
+        # mean unknown for that sensor, not an exception on every poll, nor a
+        # made up value such as a 0% battery.
+        try:
+            if description.value_calc_function:
+                value = description.value_calc_function(self.controller)
+            else:
+                value = self.controller.get_raw_data(self._register_key)
+            if value is None or value == "":
                 return None
+            if description.value_conversion_function:
+                value = description.value_conversion_function(value)
+        except (KeyError, TypeError, ValueError) as err:
+            _LOGGER.debug("No usable value for %s: %s", description.key, err)
+            return None
 
-        if self.entity_description.value_conversion_function:
-            value = self.entity_description.value_conversion_function(value)
-
+        if self._numeric and not _is_number(value):
+            _LOGGER.debug("Non numeric value for %s: %r", description.key, value)
+            return None
         return value
 
     @property

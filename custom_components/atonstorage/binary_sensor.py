@@ -27,12 +27,17 @@ class AtonStorageBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class to describe a AtonStorage sensor entity."""
 
     value_calc_function: Callable[[AtonStorage], Any] = None
+    # Unknown on a plant without a wallbox, where every EV field reads -1.
+    requires_wallbox: bool = False
+    # A live reading, unavailable once the plant stops reporting.
+    instant: bool = False
 
 
 INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="grid_to_house",
         translation_key="grid_to_house",
+        instant=True,
         name="Grid to House",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.grid_to_house,
@@ -40,6 +45,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="solar_to_battery",
         translation_key="solar_to_battery",
+        instant=True,
         name="Solar to Battery",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.solar_to_battery,
@@ -47,6 +53,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="solar_to_grid",
         translation_key="solar_to_grid",
+        instant=True,
         name="Solar to Grid",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.solar_to_grid,
@@ -54,6 +61,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="battery_to_house",
         translation_key="battery_to_house",
+        instant=True,
         name="Battery to House",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.battery_to_house,
@@ -61,6 +69,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="solar_to_house",
         translation_key="solar_to_house",
+        instant=True,
         name="Solar to House",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.solar_to_house,
@@ -68,6 +77,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="grid_to_battery",
         translation_key="grid_to_battery",
+        instant=True,
         name="Grid to Battery",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.grid_to_battery,
@@ -75,6 +85,7 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="battery_to_grid",
         translation_key="battery_to_grid",
+        instant=True,
         name="Battery to Grid",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.battery_to_grid,
@@ -83,6 +94,8 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="ev_status_off",
         translation_key="ev_status_off",
+        requires_wallbox=True,
+        instant=True,
         name="EV OFF",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.ev_status_off,
@@ -90,6 +103,8 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="ev_status_on",
         translation_key="ev_status_on",
+        requires_wallbox=True,
+        instant=True,
         name="EV ON",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.ev_status_on,
@@ -97,6 +112,8 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="ev_status_charge",
         translation_key="ev_status_charge",
+        requires_wallbox=True,
+        instant=True,
         name="EV Charging",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.ev_status_charge,
@@ -104,6 +121,8 @@ INVERTER_BINARY_SENSOR_DESCRIPTIONS = (
     AtonStorageBinarySensorEntityDescription(
         key="ev_status_warning",
         translation_key="ev_status_warning",
+        requires_wallbox=True,
+        instant=True,
         name="EV Warning",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_calc_function=lambda controller: controller.ev_status_warning,
@@ -139,7 +158,9 @@ async def async_setup_entry(
     """Set up the AtonStorage sensors."""
     _LOGGER.debug("Set up the AtonStorage binary sensors")
     entities = _create_entities(hass, entry)
-    async_add_entities(entities, True)
+    # No update_before_add: the coordinator has just refreshed, and asking again
+    # here triggered two more full refreshes, the second one rate limited.
+    async_add_entities(entities)
 
 
 def _create_entities(hass: HomeAssistant, entry: dict):
@@ -205,7 +226,21 @@ class AtonStorageBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         self._register_key = self.entity_description.key
 
     @property
+    def available(self) -> bool:
+        """Live readings go unavailable once the plant stops reporting."""
+        if not super().available:
+            return False
+        return not (self.entity_description.instant and self.controller.is_stale)
+
+    @property
     def is_on(self):
         """Return true if the binary sensor is on."""
 
-        return self.entity_description.value_calc_function(self.controller)
+        description = self.entity_description
+        if description.requires_wallbox and not self.controller.has_wallbox:
+            return None
+        try:
+            return description.value_calc_function(self.controller)
+        except (KeyError, TypeError, ValueError) as err:
+            _LOGGER.debug("No usable value for %s: %s", description.key, err)
+            return None

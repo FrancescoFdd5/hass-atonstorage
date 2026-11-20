@@ -23,6 +23,8 @@ def _make_controller(monitor_data, energy_data=None):
     controller.energy_data = energy_data
     controller._alarm_descriptions = []
     controller._alarm_descriptions_tried = True
+    controller._daily_max = {}
+    controller._opts = {}
     return controller
 
 
@@ -65,9 +67,10 @@ def test_soc_capped_at_100():
     entity = _make_entity(_description("Battery level"), controller)
     assert entity.native_value == 100.0
 
+    # An empty reading is unknown, not a made up empty battery.
     controller = _make_controller(_base_monitor(soc=""))
     entity = _make_entity(_description("Battery level"), controller)
-    assert entity.native_value == 0
+    assert entity.native_value is None
 
 
 def test_grid_power_split():

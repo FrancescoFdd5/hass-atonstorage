@@ -6,6 +6,11 @@ DEFAULT_NAME = "AtonStorage"
 
 DEFAULT_SCAN_INTERVAL = 30
 
+# The Aton app hides this share of the battery, kept as a reserve for its
+# lifetime: it shows 0% when the plant reports about 20%.
+CONF_BATTERY_RESERVE = "battery_reserve"
+DEFAULT_BATTERY_RESERVE = 20
+
 AVAILABLE_SENSORS = [
     "Last update",
     "Self sufficiency",
@@ -61,5 +66,8 @@ AVAILABLE_SENSORS = [
     "Grid phase 1 power",
     "Grid phase 2 power",
     "Grid phase 3 power",
+    "Battery level usable",
+    "Instant grid power real",
+    "Instant user power real",
     "BINARY SENSORS",
 ]
